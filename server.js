@@ -1,7 +1,7 @@
 // server.js
 import express from "express";
 import pkg from "pg";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import cors from "cors";
 import dotenv from "dotenv";
