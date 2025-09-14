@@ -70,20 +70,35 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+// ✅ FIXED LOGIN: username OR email
 app.post("/api/auth/login", async (req, res) => {
   const { username, password } = req.body;
+
   try {
-    const result = await pool.query(`SELECT * FROM users WHERE username=$1`, [username]);
+    // Allow login with either username OR email
+    const result = await pool.query(
+      `SELECT * FROM users WHERE username=$1 OR email=$1`,
+      [username]
+    );
+
     const user = result.rows[0];
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
+    if (!user) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
     const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ message: "Invalid credentials" });
+    if (!valid) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
     const token = generateToken(user);
-    res.json({ token, username: user.username, displayName: user.display_name });
+    res.json({
+      token,
+      username: user.username,
+      displayName: user.display_name,
+    });
   } catch (err) {
-    console.error(err);
+    console.error("Login error:", err);
     res.status(500).json({ message: "Login failed" });
   }
 });
@@ -92,14 +107,12 @@ app.post("/api/auth/login", async (req, res) => {
 // Get Profile
 app.get("/api/profile", authMiddleware, async (req, res) => {
   try {
-    // Base user info
     const userResult = await pool.query(
       `SELECT id, username, email, display_name AS "displayName"
        FROM users WHERE id=$1`,
       [req.user.id]
     );
 
-    // Extra profile info
     const profileResult = await pool.query(
       `SELECT 
          first_name AS "firstName",
@@ -128,19 +141,16 @@ app.put("/api/profile", authMiddleware, async (req, res) => {
   const { firstName, lastName, email, age, weightKg, profilePicUrl, heightCm } = req.body;
 
   try {
-    // 1. Update email if provided
     if (email) {
       await pool.query(`UPDATE users SET email=$1 WHERE id=$2`, [email, req.user.id]);
     }
 
-    // 2. Fetch current profile values
     const existing = await pool.query(
       `SELECT * FROM profiles WHERE user_id=$1`,
       [req.user.id]
     );
     const current = existing.rows[0] || {};
 
-    // 3. Merge incoming with existing
     const updated = {
       firstName: firstName ?? current.first_name,
       lastName: lastName ?? current.last_name,
@@ -150,7 +160,6 @@ app.put("/api/profile", authMiddleware, async (req, res) => {
       heightCm: heightCm ?? current.height_cm
     };
 
-    // 4. Insert or update
     await pool.query(
       `INSERT INTO profiles (user_id, first_name, last_name, age, weight_kg, profile_pic_url, height_cm)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -159,15 +168,14 @@ app.put("/api/profile", authMiddleware, async (req, res) => {
       [req.user.id, updated.firstName, updated.lastName, updated.age, updated.weightKg, updated.profilePicUrl, updated.heightCm]
     );
 
-    // 5. Save BMI if weight & height present
     if (updated.weightKg && updated.heightCm) {
-    const heightM = updated.heightCm / 100;
-    const bmi = updated.weightKg / (heightM * heightM);
-    await pool.query(
-    `INSERT INTO bmi_history (user_id, bmi) VALUES ($1,$2)`,
-    [req.user.id, bmi]
-  );
-}
+      const heightM = updated.heightCm / 100;
+      const bmi = updated.weightKg / (heightM * heightM);
+      await pool.query(
+        `INSERT INTO bmi_history (user_id, bmi) VALUES ($1,$2)`,
+        [req.user.id, bmi]
+      );
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -281,8 +289,6 @@ app.post("/api/presets/complete", authMiddleware, async (req, res) => {
     if (!preset.rows[0]) return res.status(404).json({ message: "Preset not found" });
 
     const p = preset.rows[0];
-
-    // Log into workouts as a completed preset
     const result = await pool.query(
       `INSERT INTO workouts (user_id, exercise_name, sets, reps, weight_kg, created_at)
        VALUES ($1,$2,1,$3,0,NOW()) RETURNING *`,
